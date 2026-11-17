@@ -1,47 +1,37 @@
 # spark-data-quality
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/Trysac/u958-spark-data-quality/actions/workflows/ci.yml/badge.svg)](https://github.com/Trysac/u958-spark-data-quality/actions/workflows/ci.yml)
-
-Deequ-style data quality checks with mergeable per-partition analyzer states, metric-history anomaly detection and JSON or Markdown verification reports
+Deequ-style data quality checks in Scala 3 with mergeable per-partition analyzer states, metric-history anomaly detection, and byte-stable JSON and Markdown verification reports. This library is designed to run locally or as the engine-agnostic core of a distributed system.
 
 ## Problem
 
-Describe in two or three sentences the concrete problem this utility solves, who hits it, and what
-they do today without it. Replace this paragraph when the first real feature lands.
-
-## Install
-
-Maven coordinates `io.github.trysac:spark-data-quality_3` (Scala 3). Until it is published to Maven
-Central, build it from a release tag through JitPack (`https://jitpack.io`), then declare in
-`build.sbt`:
-
-```scala
-libraryDependencies += "io.github.trysac" %% "spark-data-quality" % "0.1.0"
-```
-
-Requires Scala 3.9 or newer and Java 21 or newer. No dependencies outside the Scala standard
-library.
+Data teams find nulls, duplicate keys, and out-of-range values only after a bad load has reached production, because validation logic often lives in ad hoc scripts or requires heavy distributed infrastructure (like a Spark cluster) even for simple validation. This makes running continuous quality checks expensive and difficult to integrate into CI/CD pipelines.
 
 ## Usage
 
 ```scala
-import io.github.trysac.spark_data_quality.Text
+import io.github.trysac.spark_data_quality.*
 
-// normalize trims surrounding whitespace and lower-cases the text.
-val name = Text.normalize("  Hello World ") // "hello world"
-
-// Blank input is rejected explicitly instead of returning an empty string.
-Text.normalize("   ") // throws BlankInputException ("input is blank")
+val schema = Schema(Vector("order_id" -> ColumnType.Text, "amount" -> ColumnType.Float64))
+val csv = "order_id,amount\nORD-1,25.50\nORD-2,40.00\n"
+val source = CsvSource.fromString(csv, schema)
+val check = Check(Level.Error, "orders")
+  .isUnique("order_id")
+  .hasMin("amount", Assertion.gte(0.0))
+val result = VerificationSuite.run(source, Seq(check))
+println(Report.toJson(result))
 ```
 
-## Documentation
+## Public API Summary
 
-- [Architecture](docs/ARCHITECTURE.md) and [decisions](docs/decisions/)
-- [Testing](docs/TESTING.md) and [security](docs/SECURITY.md)
-- [Project record](docs/PROJECT.md) and [stack](docs/STACK.md)
-- [Changelog](CHANGELOG.md) and [contributing guide](CONTRIBUTING.md)
+- **Analyzers**: `SizeAnalyzer`, `CompletenessAnalyzer`, `UniquenessAnalyzer`, `MinAnalyzer`, `MaxAnalyzer`, `MeanAnalyzer`, `PatternMatchAnalyzer`, `IsContainedInAnalyzer`.
+- **Verification**: `VerificationSuite.run` evaluates constraints and anomaly checks in a single pass.
+- **Reporting**: `Report.toJson` and `Report.toMarkdown` generate deterministic outputs.
+- **Anomalies**: `RelativeRateOfChange` and `ZScore` strategies via `AnomalyCheck`.
+- **Repository**: `InMemoryMetricsRepository` maintains historical metrics.
+- **Errors**: `DataQualityException` reports specific error codes: `'unknown_column'`, `'type_mismatch'`, `'invalid_regex'`, `'csv_syntax'`, `'input_too_large'`, `'state_too_large'`, `'insufficient_history'`, `'repository_full'`, `'empty_dataset'`.
 
-## License
+## Why not Deequ?
 
-[MIT](LICENSE) (c) 2026 Miguel Gomez
+Deequ requires a Spark cluster and currently lacks native Scala 3 support. This library provides an engine-agnostic implementation of the Deequ core (mergeable analyzer states), works in Scala 3, allows for testing without distributed infrastructure, and produces byte-stable, deterministic reports.
+
+See [docs/SECURITY.md](docs/SECURITY.md) for security considerations.
