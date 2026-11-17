@@ -1,29 +1,17 @@
-# Security notes
+# Security & Threat Model
 
-## Threat model
+`spark-data-quality` processes potentially untrusted CSV strings and schema definitions in memory. The library does not perform any network I/O or filesystem access.
 
-`io.github.trysac:spark-data-quality` is a pure library without I/O. The main risks are:
+## Controls
 
-- **Supply chain**: a compromised dependency, sbt plugin or CI action. Mitigation: standard
-  library only, every plugin pinned in `project/plugins.sbt` and every dependency pinned to an
-  exact version in `build.sbt`, every resolved artifact recorded with its checksum in
-  `build.sbt.lock` (the lint gate fails when it is stale), the sbt version pinned in
-  `project/build.properties`, OSV-Scanner over the locked library dependencies and over the whole
-  lockfile in the gates, Dependabot weekly updates, actions pinned by commit SHA, minimal workflow
-  permissions.
-- **Leaked secrets**: tokens committed by mistake. Mitigation: `gitleaks` runs in the local gates
-  and in CI; `.env` files are git-ignored.
-- **Insecure code**: command injection, unsafe deserialization, disabled TLS verification.
-  Mitigation: scalafix and the Scala compiler with warnings as errors, and the factory's Semgrep
-  rules (`.semgrep/factory-rules.yml`, `nosemgrep` ignored); fix the code instead of silencing it.
-- **Untrusted input**: callers may pass hostile strings. Mitigation: validate input and throw
-  explicit, documented exceptions; never deserialize untrusted bytes with `ObjectInputStream`;
-  never start a shell or build a command line from untrusted data (`scala.sys.process` takes a
-  `Seq` of arguments).
+- **Input Size Limitation**: `CsvSource.fromString` enforces a limit of 8,388,608 bytes. Inputs exceeding this throw `DataQualityException('input_too_large')`.
+- **Memory Exhaustion**: 
+  - `UniquenessAnalyzer` caps distinct value counts at 1,000,000; exceeding this throws `DataQualityException('state_too_large')`.
+  - `InMemoryMetricsRepository` limits storage to 10,000 entries; exceeding this throws `DataQualityException('repository_full')`.
+- **Error Sanitization**: `DataQualityException.sanitizeSnippet` truncates all untrusted inputs (column names, regex patterns, values) included in error messages to 200 characters, preventing large-payload log injection.
 
-## Publishing
+## Defended Threats
 
-Releases are git tags; publishing to Maven Central needs a namespace account and a signing key,
-which are never stored in the repository.
-
-To report a vulnerability, see [SECURITY.md](../SECURITY.md).
+- Denial of Service via malicious CSV input size.
+- Denial of Service via unbounded state growth (uniqueness maps, metric repository).
+- Log injection via overlong error messages.

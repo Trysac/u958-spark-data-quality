@@ -9,4 +9,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added Deequ-style partitioned data quality analyzers, fluent Check DSL, RFC 4180 CsvSource, InMemoryMetricsRepository with RelativeRateOfChange and ZScore anomaly detection, and deterministic JSON/Markdown reports.
 - Initial project structure from the factory utility template.

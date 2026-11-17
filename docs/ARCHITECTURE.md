@@ -1,30 +1,29 @@
 # Architecture
 
-## Purpose
+`spark-data-quality` separates tabular data representation and partitioned scanning from metric aggregation, constraint evaluation, anomaly detection, and report rendering.
 
-`io.github.trysac:spark-data-quality` is a small, dependency-free Scala 3 library: Deequ-style data quality checks with mergeable per-partition analyzer states, metric-history anomaly detection and JSON or Markdown verification reports
+## Core Components
 
-## Shape
+1. **Tabular Model (`Cell`, `ColumnType`, `Schema`)**
+   - `Cell` is a Scala 3 enum (`Null`, `Text`, `Int64`, `Float64`, `Bool`).
+   - `Schema` resolves column indices and validates cell types at scan time, raising `DataQualityException("unknown_column", ...)` or `DataQualityException("type_mismatch", ...)`.
 
-```text
-caller code --> package io.github.trysac.spark_data_quality (src/main/scala)
-                    |
-                    +-- objects and functions that are pure; no I/O, no global mutable state
-                    +-- private helpers (optional)
-```
+2. **Partitioned Data Sources (`DataSource`, `InMemorySource`, `CsvSource`)**
+   - `DataSource` exposes `schema: Schema` and `partitions: Seq[Iterator[IndexedSeq[Cell]]]`, mirroring distributed `mapPartitions` execution.
+   - `CsvSource.fromString` parses RFC 4180 CSV text (supporting CRLF/LF newlines, quoted fields, doubled quotes, and empty fields as `Cell.Null`) while enforcing a default 8 MiB UTF-8 byte limit (`input_too_large`).
 
-- **Public API**: every public declaration of the package. `private` and `private[spark_data_quality]`
-  declarations may change without a major version.
-- **Errors**: invalid input throws an `IllegalArgumentException` subclass of the library (such as
-  `BlankInputException`) documented with `@throws`. The library never prints or exits.
-- **Side effects**: none. If a feature needs I/O, accept an `InputStream`, a `Reader` or a small
-  trait instead of opening resources, and record the choice in an ADR.
+3. **Analyzers and Mergeable States (`Analyzer`, `AnalyzerState`)**
+   - Every analyzer defines `State <: AnalyzerState`, `computePartition`, `zeroState`, `merge(a, b)`, and `metric(state)`.
+   - `merge` is associative and commutative so partition states can be combined in any order or tree reduction without changing the result.
+   - `UniquenessAnalyzer` caps its frequency map at 1,000,000 distinct values (`state_too_large`) to bound heap consumption.
 
-## Quality contract
+4. **Verification Suite (`VerificationSuite`, `Check`, `Constraint`, `Assertion`)**
+   - Collects all unique analyzers required by the requested checks and anomaly checks.
+   - Scans each partition once to compute per-partition states, merges them across partitions, and evaluates all assertions and historical anomaly strategies.
 
-`scripts/Check.java` is the single definition of the gates; `fabrica.json` tells the factory and CI
-how to run it. See [TESTING.md](TESTING.md).
+5. **Metrics Repository and Anomaly Detection (`MetricsRepository`, `RelativeRateOfChange`, `ZScore`)**
+   - `InMemoryMetricsRepository` stores up to `maxEntries = 10_000` timestamped `ResultKey` runs (`repository_full` on overflow).
+   - `RelativeRateOfChange` compares against the latest historical point; `ZScore` computes population standard deviation over all historical points (requiring at least 3 points, or raising `insufficient_history`).
 
-## Decisions
-
-Architecture decisions are recorded in [decisions/](decisions/) as numbered ADRs.
+6. **Reporting (`Report`)**
+   - `Report.toJson` and `Report.toMarkdown` sort metric keys lexicographically, preserve constraint declaration order, and round floating-point values to 4 decimal places with `RoundingMode.HALF_EVEN` for byte-identical output across runs.
